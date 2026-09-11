@@ -50,8 +50,3 @@
 
 Подробнее — в [docs/deployment.md](docs/deployment.md).
 
-##  Скриншоты
-
-- Главная MediaWiki
-- Дашборд Grafana
-- Хосты в Zabbix
