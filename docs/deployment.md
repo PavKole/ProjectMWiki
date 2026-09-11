@@ -1,25 +1,63 @@
-# Развёртывание
+# Развёртывание инфраструктуры
 
-## 1. Подготовка
+## Предварительные требования
 
-На управляющей машине (mon1):
-- Установить Ansible: `sudo apt install ansible`
-- Настроить SSH-ключи: `ssh-keygen -t ed25519`, `ssh-copy-id ansible@<IP>`
-- Создать inventory.ini (см. ansible/inventory.ini.example)
+- 7 виртуальных машин с Ubuntu Server 22.04 / 24.04 LTS
+- Сетевая связность между всеми узлами (подсеть 192.168.0.0/24)
+- Статические IP-адреса, настроенные через netplan или NetworkManager
+- Пользователь `ansible` с sudo без пароля на всех узлах
+- SSH-ключи для беспарольного доступа с mon1
 
-## 2. Настройка статических IP
+## Этапы развёртывания
 
-На всех серверах, кроме mon1, использовать netplan:
-```yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    enp0s3:
-      dhcp4: no
-      addresses: [192.168.0.XXX/24]
-      routes:
-        - to: default
-          via: 192.168.0.1
-      nameservers:
-        addresses: [8.8.8.8, 8.8.4.4]
+### 1. Подготовка узлов
+- Установка базовых пакетов: `apt install curl ntp htop`
+- Настройка NTP для синхронизации времени
+
+### 2. Настройка PostgreSQL (db1, db2)
+- Установка PostgreSQL 14
+- На primary: параметры `wal_level=replica`, `max_wal_senders=3`, `listen_addresses='*'`
+- Создание пользователей `repuser` (репликация) и `wikiuser` (MediaWiki)
+- Создание БД `my_wiki`
+- Настройка `pg_hba.conf` для доступа с серверов приложений и репликации
+- На реплике: `pg_basebackup -h <primary> -D /var/lib/postgresql/14/main -U repuser -R`
+
+### 3. Настройка NFS (nfs)
+- Установка `nfs-kernel-server`
+- Экспорт `/srv/nfs/mediawiki` в подсеть
+- Хранение бэкапов в `/backups/files`
+
+### 4. Настройка серверов приложений (app1, app2)
+- Установка Nginx, PHP-FPM, расширений, `nfs-common`
+- Монтирование NFS в `/var/www/mediawiki/images`
+- Скачивание и распаковка MediaWiki 1.42.1
+- Создание `LocalSettings.php` (через веб-установщик)
+- Настройка Nginx для MediaWiki
+
+### 5. Настройка балансировщика (lb1)
+- Установка Nginx
+- Upstream с app1 и app2
+- Настройка HTTPS (самоподписанный сертификат)
+- Редирект HTTP → HTTPS
+
+### 6. Настройка мониторинга (mon1)
+- Установка Zabbix Server + Frontend
+- Установка Prometheus и Grafana
+- Установка Node Exporter на все узлы
+- Добавление хостов и веб-сценариев в Zabbix
+
+### 7. Настройка резервного копирования
+- Размещение скриптов `backup_files.sh` и `backup_db.sh`
+- Настройка cron:
+  - Файлы: `0 2 * * *` на nfs
+  - База: `30 2 * * *` на текущем primary
+- Хранение копий 7 дней
+
+## Проверка работоспособности
+
+1. Открыть `https://<lb1-IP>/` — должна загрузиться MediaWiki.
+2. Создать страницу, загрузить файл.
+3. Проверить, что файл виден на app1 и app2.
+4. Остановить один сервер приложений — сайт должен остаться доступным.
+5. Остановить primary БД — после promote реплики сайт должен восстановиться.
+6. Запустить скрипты бэкапов вручную, убедиться в создании архивов.
