@@ -1,0 +1,17 @@
+# Логи
+*.log
+
+# Бэкапы
+backups/
+*.sql
+*.tar.gz
+
+# Секреты
+.env
+*.key
+id_rsa
+id_ed25519
+
+# Системное
+.DS_Store
+Thumbs.db
