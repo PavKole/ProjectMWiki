@@ -1,14 +1,9 @@
 ---
-# ==============================================================
-# Playbook автоматического развёртывания MediaWiki, Nginx и PostgreSQL
-# ==============================================================
-
-# ---------- Часть 1. Подготовка всех серверов ----------
 - name: Общая подготовка всех узлов
   hosts: all
   become: yes
   tasks:
-    - name: Установить базовые пакеты (curl, ntp, htop)
+    - name: Установить базовые пакеты
       apt:
         name:
           - curl
@@ -17,20 +12,19 @@
         state: present
         update_cache: yes
 
-    - name: Запустить и включить NTP
+    - name: Запустить NTP
       systemd:
         name: ntp
         state: started
         enabled: yes
 
-# ---------- Часть 2. Настройка серверов баз данных ----------
-- name: Настройка PostgreSQL (primary и replica)
+- name: Настройка PostgreSQL
   hosts: db
   become: yes
   vars:
-    postgresql_version: "14"
-    repuser_password: "rep_password"
-    wikiuser_password: "wiki_password"
+    pg_version: "14"
+    repuser_pass: "rep_password"
+    wikiuser_pass: "wiki_password"
   tasks:
     - name: Установить PostgreSQL
       apt:
@@ -39,13 +33,13 @@
           - postgresql-contrib
         state: present
 
-    - name: Запустить и включить PostgreSQL
+    - name: Запустить PostgreSQL
       systemd:
         name: postgresql
         state: started
         enabled: yes
 
-    - name: Изменить параметры PostgreSQL для primary (только на db1)
+    - name: Настроить параметры primary
       become_user: postgres
       postgresql_set:
         name: "{{ item.name }}"
@@ -57,59 +51,54 @@
         - { name: "hot_standby", value: "on" }
       when: inventory_hostname == 'db1'
 
-    - name: Создать пользователя repuser для репликации (только на db1)
+    - name: Создать пользователя repuser
       become_user: postgres
       postgresql_user:
         name: repuser
-        password: "{{ repuser_password }}"
+        password: "{{ repuser_pass }}"
         role_attr_flags: REPLICATION,LOGIN
       when: inventory_hostname == 'db1'
 
-    - name: Создать пользователя wikiuser для MediaWiki (только на db1)
+    - name: Создать пользователя wikiuser
       become_user: postgres
       postgresql_user:
         name: wikiuser
-        password: "{{ wikiuser_password }}"
+        password: "{{ wikiuser_pass }}"
       when: inventory_hostname == 'db1'
 
-    - name: Создать базу данных my_wiki (только на db1)
+    - name: Создать базу my_wiki
       become_user: postgres
       postgresql_db:
         name: my_wiki
         owner: wikiuser
       when: inventory_hostname == 'db1'
 
-    - name: Добавить запись в pg_hba.conf для подключения приложений (db1)
+    - name: Добавить правила в pg_hba.conf
       lineinfile:
-        path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
-        line: "host    all             wikiuser        192.168.0.0/24            md5"
+        path: "/etc/postgresql/{{ pg_version }}/main/pg_hba.conf"
+        line: "{{ item }}"
         insertafter: EOF
+      loop:
+        - "host    all             wikiuser        192.168.0.0/24            md5"
+        - "host    replication     repuser         192.168.0.0/24            md5"
       when: inventory_hostname == 'db1'
 
-    - name: Добавить запись в pg_hba.conf для репликации (db1)
-      lineinfile:
-        path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
-        line: "host    replication     repuser         192.168.0.0/24            md5"
-        insertafter: EOF
-      when: inventory_hostname == 'db1'
-
-    - name: Перезапустить PostgreSQL после изменений (db1)
+    - name: Перезапустить PostgreSQL
       systemd:
         name: postgresql
         state: restarted
       when: inventory_hostname == 'db1'
 
-# ---------- Часть 3. Настройка NFS-сервера ----------
 - name: Настройка NFS-сервера
   hosts: nfs
   become: yes
   tasks:
-    - name: Установить nfs-kernel-server
+    - name: Установить NFS-сервер
       apt:
         name: nfs-kernel-server
         state: present
 
-    - name: Создать каталог для общих файлов MediaWiki
+    - name: Создать каталог
       file:
         path: /srv/nfs/mediawiki
         state: directory
@@ -117,27 +106,23 @@
         group: www-data
         mode: '0755'
 
-    - name: Настроить экспорт каталога
+    - name: Настроить экспорт
       lineinfile:
         path: /etc/exports
         line: "/srv/nfs/mediawiki 192.168.0.0/24(rw,sync,no_subtree_check,no_root_squash)"
         create: yes
 
-    - name: Применить экспорт и перезапустить NFS
-      shell: |
-        exportfs -a
-        systemctl restart nfs-kernel-server
+    - name: Применить экспорт
+      shell: exportfs -a && systemctl restart nfs-kernel-server
 
-# ---------- Часть 4. Настройка серверов приложений MediaWiki ----------
 - name: Настройка серверов приложений
   hosts: app
   become: yes
   vars:
-    mediawiki_version: "1.42.1"
-    db_host: "192.168.0.109"
-    nfs_server: "192.168.0.111"
+    mw_version: "1.42.1"
+    nfs_ip: "192.168.0.111"
   tasks:
-    - name: Установить Nginx, PHP-FPM и расширения
+    - name: Установить Nginx, PHP-FPM и NFS-клиент
       apt:
         name:
           - nginx
@@ -152,16 +137,7 @@
           - rsync
         state: present
 
-    - name: Запустить и включить Nginx и PHP-FPM
-      systemd:
-        name: "{{ item }}"
-        state: started
-        enabled: yes
-      loop:
-        - nginx
-        - php8.1-fpm
-
-    - name: Создать каталог для MediaWiki
+    - name: Создать каталог MediaWiki
       file:
         path: /var/www/mediawiki
         state: directory
@@ -169,50 +145,48 @@
         group: www-data
         mode: '0755'
 
-    - name: Смонтировать NFS-каталог images
+    - name: Смонтировать NFS
       mount:
         path: /var/www/mediawiki/images
-        src: "{{ nfs_server }}:/srv/nfs/mediawiki"
+        src: "{{ nfs_ip }}:/srv/nfs/mediawiki"
         fstype: nfs
         opts: defaults
         state: mounted
 
     - name: Скачать MediaWiki
       get_url:
-        url: "https://releases.wikimedia.org/mediawiki/{{ mediawiki_version }}/mediawiki-{{ mediawiki_version }}.tar.gz"
+        url: "https://releases.wikimedia.org/mediawiki/{{ mw_version }}/mediawiki-{{ mw_version }}.tar.gz"
         dest: /tmp/mediawiki.tar.gz
 
-    - name: Распаковать архив MediaWiki
+    - name: Распаковать MediaWiki
       unarchive:
         src: /tmp/mediawiki.tar.gz
         dest: /tmp
         remote_src: yes
 
-    - name: Скопировать файлы MediaWiki в /var/www/mediawiki
-      shell: rsync -av --exclude='images' /tmp/mediawiki-{{ mediawiki_version }}/ /var/www/mediawiki/
-      args:
-        warn: false
+    - name: Скопировать файлы
+      shell: rsync -a --exclude='images' /tmp/mediawiki-{{ mw_version }}/ /var/www/mediawiki/
 
-    - name: Установить владельца www-data
+    - name: Назначить владельца
       file:
         path: /var/www/mediawiki
         owner: www-data
         group: www-data
         recurse: yes
 
-    - name: Разместить шаблон конфигурации Nginx для MediaWiki
-      template:
-        src: mediawiki_nginx.conf.j2
+    - name: Скопировать конфиг Nginx
+      copy:
+        src: files/mediawiki.conf
         dest: /etc/nginx/sites-available/mediawiki
       notify: reload nginx
 
-    - name: Активировать сайт mediawiki
+    - name: Активировать сайт
       file:
         src: /etc/nginx/sites-available/mediawiki
         dest: /etc/nginx/sites-enabled/mediawiki
         state: link
 
-    - name: Удалить default сайт
+    - name: Удалить default
       file:
         path: /etc/nginx/sites-enabled/default
         state: absent
@@ -223,32 +197,28 @@
         name: nginx
         state: reloaded
 
-# ---------- Часть 5. Настройка балансировщика Nginx ----------
 - name: Настройка балансировщика
   hosts: lb
   become: yes
-  vars:
-    app1: "192.168.0.106"
-    app2: "192.168.0.108"
   tasks:
     - name: Установить Nginx
       apt:
         name: nginx
         state: present
 
-    - name: Создать конфигурацию балансировщика
-      template:
-        src: loadbalancer_nginx.conf.j2
+    - name: Скопировать конфиг балансировщика
+      copy:
+        src: files/loadbalancer.conf
         dest: /etc/nginx/sites-available/loadbalancer
       notify: reload nginx
 
-    - name: Активировать сайт loadbalancer
+    - name: Активировать сайт
       file:
         src: /etc/nginx/sites-available/loadbalancer
         dest: /etc/nginx/sites-enabled/loadbalancer
         state: link
 
-    - name: Удалить default сайт
+    - name: Удалить default
       file:
         path: /etc/nginx/sites-enabled/default
         state: absent
@@ -259,17 +229,16 @@
         name: nginx
         state: reloaded
 
-# ---------- Часть 6. Мониторинг ----------
-- name: Установка Zabbix агента и Node Exporter
+- name: Мониторинг
   hosts: all
   become: yes
   tasks:
-    - name: Установить Zabbix агент
+    - name: Установить Zabbix-агент
       apt:
         name: zabbix-agent
         state: present
 
-    - name: Установить Node Exporter
+    - name: Скачать Node Exporter
       get_url:
         url: "https://github.com/prometheus/node_exporter/releases/download/v1.8.0/node_exporter-1.8.0.linux-amd64.tar.gz"
         dest: /tmp/node_exporter.tar.gz
@@ -280,7 +249,7 @@
         dest: /tmp
         remote_src: yes
 
-    - name: Переместить бинарник Node Exporter
+    - name: Установить бинарник
       copy:
         src: /tmp/node_exporter-1.8.0.linux-amd64/node_exporter
         dest: /usr/local/bin/node_exporter
@@ -292,16 +261,18 @@
         shell: /bin/false
         create_home: no
 
-    - name: Создать systemd-юнит для Node Exporter
+    - name: Создать systemd-юнит
       copy:
         dest: /etc/systemd/system/node_exporter.service
         content: |
           [Unit]
           Description=Node Exporter
           After=network.target
+
           [Service]
           User=node_exporter
           ExecStart=/usr/local/bin/node_exporter
+
           [Install]
           WantedBy=multi-user.target
 
