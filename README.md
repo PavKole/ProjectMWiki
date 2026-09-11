@@ -20,7 +20,7 @@
 | nfs  | 192.168.0.111 | NFS-сервер (общие файлы, бэкапы) |
 | mon1 | 192.168.0.107 | Zabbix, Prometheus, Grafana, управление |
 
-Схема: [[diagrams/infrastructure.png](diagrams/infrastructure.png)](https://github.com/PavKole/wiki-infra-/blob/main/docs/architecture.md)
+Схема: https://github.com/PavKole/wiki-infra-/blob/main/docs/architecture.md
 
 ## 🛠️ Стек технологий
 
