@@ -1,7 +1,5 @@
 #!/bin/bash
-# Скрипт резервного копирования файлов MediaWiki
-# Использование: backup_files.sh [ИСХОДНАЯ_ДИРЕКТОРИЯ] [КАТАЛОГ_ДЛЯ_БЭКАПОВ]
-
+## Скрипт резервного копирования файлов MediaWiki
 SOURCE_DIR="${1:-/srv/nfs/mediawiki}"
 BACKUP_DIR="${2:-/backups/files}"
 LOG_FILE="/backups/backup.log"
