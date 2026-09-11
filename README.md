@@ -1,6 +1,7 @@
 # Корпоративный сервис документации на MediaWiki
 
 Отказоустойчивая инфраструктура для ведения  документации на базе MediaWiki.
+<img width="2257" height="1194" alt="image" src="https://github.com/user-attachments/assets/ba60bdaf-e11c-475b-9869-e02fab3525a2" />
 
 ##  Цель проекта
 
